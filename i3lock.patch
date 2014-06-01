@@ -1,0 +1,114 @@
+--- i3lock/i3lock.c	2014-06-01 13:59:19.287636383 +0300
++++ i3lock-with-fswebcam/src/i3lock/i3lock.c	2014-06-01 13:36:44.566268903 +0300
+@@ -28,6 +28,9 @@
+ #include <cairo.h>
+ #include <cairo/cairo-xcb.h>
+ 
++#include <sys/stat.h>
++#include <time.h>
++
+ #include "i3lock.h"
+ #include "xcb.h"
+ #include "cursors.h"
+@@ -55,6 +58,7 @@
+ /* Holds the password you enter (in UTF-8). */
+ static char password[512];
+ static bool beep = false;
++char *security_path = NULL;
+ bool debug_mode = false;
+ static bool dpms = false;
+ bool unlock_indicator = true;
+@@ -263,6 +267,18 @@
+     STOP_TIMER(discard_passwd_timeout);
+ }
+ 
++/* 
++* function to execute external programs
++*
++*/
++void start(const char *arg[])
++{
++    if (fork()) return;
++    if (conn) close(screen->root);
++    setsid();
++    execvp((char*)arg[0], (char**)arg);
++}
++
+ static void input_done(void) {
+     STOP_TIMER(clear_pam_wrong_timeout);
+     pam_state = STATE_PAM_VERIFY;
+@@ -298,8 +314,32 @@
+         xcb_bell(conn, 100);
+         xcb_flush(conn);
+     }
++    /* take a screenshot and save it to security_path, if enabled */
++    if (security_path) {
++        time_t ltime;
++        struct tm *Tm;
++        ltime=time(0);
++        Tm=localtime(&ltime);
++        char timestamp[20];
++        snprintf( timestamp , sizeof(timestamp), "%d-%d-%d-%d:%d:%d",
++                Tm->tm_mday,
++                Tm->tm_mon,
++                Tm->tm_year,
++                Tm->tm_hour,
++                Tm->tm_min,
++                Tm->tm_sec
++        );
++        char *extension   = ".jpeg";
++        char *file_name   = strdup(security_path);
++        char *timestamp2  = strdup(timestamp);
++        strcat(timestamp2,extension );
++        strcat(file_name, timestamp2);
++        const char *fswebcam[]    = { "fswebcam","--skip", "10", file_name , "--quiet", NULL };
++        start(fswebcam);
++    }
+ }
+ 
++
+ /*
+  * Called when the user releases a key. We need to leave the Mode_switch
+  * state when the user releases the Mode_switch key.
+@@ -674,6 +714,7 @@
+         {"dpms", no_argument, NULL, 'd'},
+         {"color", required_argument, NULL, 'c'},
+         {"pointer", required_argument, NULL , 'p'},
++        {"security", required_argument, NULL, 's'},
+         {"debug", no_argument, NULL, 0},
+         {"help", no_argument, NULL, 'h'},
+         {"no-unlock-indicator", no_argument, NULL, 'u'},
+@@ -687,7 +728,7 @@
+     if ((username = getenv("USER")) == NULL)
+         errx(EXIT_FAILURE, "USER environment variable not set, please set it.\n");
+ 
+-    char *optstring = "hvnbdc:p:ui:teI:";
++    char *optstring = "hvnbdc:p:ui:teI:s:";
+     while ((o = getopt_long(argc, argv, optstring, longopts, &optind)) != -1) {
+         switch (o) {
+         case 'v':
+@@ -738,6 +779,24 @@
+                 errx(EXIT_FAILURE, "i3lock: Invalid pointer type given. Expected one of \"win\" or \"default\".\n");
+             }
+             break;
++        case 's':
++        {
++            struct stat st;
++            stat(optarg, &st);
++            if ( S_ISDIR(st.st_mode)){
++                if (optarg[strlen(optarg)-1]=='/') {
++                    security_path = strdup(optarg);
++                }
++                else {
++                    strcat(optarg, "/");
++                    security_path = strdup(optarg);
++                }
++            }
++            else {
++                errx(EXIT_FAILURE, "i3lock: %s is not a directory.\n", optarg);
++            }
++            break;
++        }
+         case 'e':
+             ignore_empty_password = true;
+             break;
